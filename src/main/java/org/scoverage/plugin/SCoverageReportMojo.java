@@ -479,6 +479,36 @@ public class SCoverageReportMojo
             }
         }
 
+        if (null == topLevelModule)
+        {
+            for ( MavenProject module : reactorProjects )
+            {
+                if ( !module.hasParent() )
+                {
+                    continue;
+                }
+
+                MavenProject parent = module.getParent();
+                while ( parent.hasParent() )
+                {
+                    parent = parent.getParent();
+                }
+                if ( null != topLevelModule )
+                {
+                    if (topLevelModule.getBasedir().getAbsolutePath().length()
+                        < parent.getBasedir().getAbsolutePath().length())
+                    {
+                        continue;
+                    }
+                }
+                topLevelModule = parent;
+            }
+            if ( null == topLevelModule )
+            {
+                topLevelModule = project;
+            }
+        }
+
         /* Empty report must be generated or top-level site will contain invalid link to non-existent Scoverage report
         if ( scoverageDataDirs.isEmpty() )
         {
