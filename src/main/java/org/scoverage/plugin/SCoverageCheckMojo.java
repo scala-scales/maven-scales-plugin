@@ -23,12 +23,14 @@ import java.util.List;
 
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoFailureException;
+import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.plugins.annotations.Execute;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 
+import scala.collection.JavaConversions;
 import scala.collection.JavaConverters;
 
 import scoverage.Coverage;
@@ -69,7 +71,7 @@ public class SCoverageCheckMojo
     private File dataDirectory;
 
     /**
-     * Required minimum coverage.
+     * Required minimum total statement coverage.
      * <br>
      * <br>
      * See <a href="https://github.com/scoverage/sbt-scoverage#minimum-coverage">https://github.com/scoverage/sbt-scoverage#minimum-coverage</a> for additional documentation.
@@ -79,6 +81,56 @@ public class SCoverageCheckMojo
      */
     @Parameter( property = "scoverage.minimumCoverage", defaultValue = "0" )
     private Double minimumCoverage;
+
+    /**
+     * Required minimum total branch coverage.
+     * <br>
+     * <br>
+     * See <a href="https://github.com/scoverage/sbt-scoverage#minimum-coverage">https://github.com/scoverage/sbt-scoverage#minimum-coverage</a> for additional documentation.
+     * <br>
+     */
+    @Parameter( property = "scoverage.minimumCoverageBranchTotal", defaultValue = "0" )
+    private Double minimumCoverageBranchTotal;
+
+    /**
+     * Required minimum per-package statement coverage.
+     * <br>
+     * <br>
+     * See <a href="https://github.com/scoverage/sbt-scoverage#minimum-coverage">https://github.com/scoverage/sbt-scoverage#minimum-coverage</a> for additional documentation.
+     * <br>
+     */
+    @Parameter( property = "scoverage.minimumCoverageStmtPerPackage", defaultValue = "0" )
+    private Double minimumCoverageStmtPerPackage;
+
+    /**
+     * Required minimum per-package branch coverage.
+     * <br>
+     * <br>
+     * See <a href="https://github.com/scoverage/sbt-scoverage#minimum-coverage">https://github.com/scoverage/sbt-scoverage#minimum-coverage</a> for additional documentation.
+     * <br>
+     */
+    @Parameter( property = "scoverage.minimumCoverageBranchPerPackage", defaultValue = "0" )
+    private Double minimumCoverageBranchPerPackage;
+
+    /**
+     * Required minimum per-file statement coverage.
+     * <br>
+     * <br>
+     * See <a href="https://github.com/scoverage/sbt-scoverage#minimum-coverage">https://github.com/scoverage/sbt-scoverage#minimum-coverage</a> for additional documentation.
+     * <br>
+     */
+    @Parameter( property = "scoverage.minimumCoverageStmtPerFile", defaultValue = "0" )
+    private Double minimumCoverageStmtPerFile;
+
+    /**
+     * Required minimum per-file branch coverage.
+     * <br>
+     * <br>
+     * See <a href="https://github.com/scoverage/sbt-scoverage#minimum-coverage">https://github.com/scoverage/sbt-scoverage#minimum-coverage</a> for additional documentation.
+     * <br>
+     */
+    @Parameter( property = "scoverage.minimumCoverageBranchPerFile", defaultValue = "0" )
+    private Double minimumCoverageBranchPerFile;
 
     /**
      * Fail the build if minimum coverage was not reached.
@@ -161,27 +213,23 @@ public class SCoverageCheckMojo
         getLog().info( String.format( "Branch coverage....: %s%%", coverage.branchCoverageFormatted() ) );
         getLog().debug( String.format( "invokedBranchesCount:%d / branchCount:%d, invokedStatementCount:%d / statementCount:%d",
                                       invokedBranchesCount, branchCount, invokedStatementCount, statementCount ) );
-        if ( minimumCoverage > 0.0 )
+
+        boolean ok = checkCoverage( getLog(), "Total", coverage,
+                                    minimumCoverage, minimumCoverageBranchTotal );
+        for ( scoverage.MeasuredPackage pkgCoverage : JavaConversions.asJavaIterable( coverage.packages() ) )
         {
-            String minimumCoverageFormatted = scoverage.DoubleFormat.twoFractionDigits( minimumCoverage );
-            if ( is100( minimumCoverage ) && is100( coverage.statementCoveragePercent() ) )
-            {
-                getLog().info( "100% Coverage !" );
-            }
-            else if ( coverage.statementCoveragePercent() < minimumCoverage )
-            {
-                getLog().error( String.format( "Coverage is below minimum [%s%% < %s%%]",
-                                               coverage.statementCoverageFormatted(), minimumCoverageFormatted ) );
-                if ( failOnMinimumCoverage )
-                {
-                    throw new MojoFailureException( "Coverage minimum was not reached" );
-                }
-            }
-            else
-            {
-                getLog().info( String.format( "Coverage is above minimum [%s%% >= %s%%]",
-                                              coverage.statementCoverageFormatted(), minimumCoverageFormatted ) );
-            }
+            ok &= checkCoverage( getLog(), "Package:" + pkgCoverage.name(), pkgCoverage,
+                                 minimumCoverageStmtPerPackage, minimumCoverageBranchPerPackage );
+        }
+        for ( scoverage.MeasuredFile fileCoverage : JavaConversions.asJavaIterable( coverage.files() ) )
+        {
+            ok &= checkCoverage( getLog(), "File:" + fileCoverage.filename(), fileCoverage,
+                                 minimumCoverageStmtPerFile, minimumCoverageBranchPerFile );
+        }
+
+        if ( !ok && failOnMinimumCoverage )
+        {
+            throw new MojoFailureException( "Coverage minimum was not reached" );
         }
 
         long te = System.currentTimeMillis();
@@ -190,9 +238,47 @@ public class SCoverageCheckMojo
 
     // Private utility methods
 
-    private boolean is100( Double d )
+    private static boolean is100( Double d )
     {
         return Math.abs( 100 - d ) <= 0.00001d;
     }
 
+    private static boolean checkCoverage( Log logger, String metric, scoverage.CoverageMetrics metrics,
+                                          double minimumStmt, double minimimBranch )
+    {
+        return
+            checkCoverage( logger, "Statement:" + metric, minimumStmt, metrics.statementCoveragePercent() ) &&
+            checkCoverage( logger, "Branch:" + metric, minimimBranch, metrics.branchCoveragePercent() );
+    }
+
+    private static boolean checkCoverage( Log logger, String metric, double minimum, double actual )
+    {
+        if ( minimum <= 0 )
+        {
+            return true;
+        }
+
+        if ( is100( minimum ) && is100( actual ) )
+        {
+            logger.debug( String.format( "Coverage is 100%: %s!", metric ));
+            return true;
+        }
+
+        String minimumFormatted = scoverage.DoubleFormat.twoFractionDigits( minimum );
+        String actualFormatted = scoverage.DoubleFormat.twoFractionDigits( actual );
+        boolean ok = minimum <= actual;
+
+        if ( ok )
+        {
+            logger.debug( String.format( "Coverage is above minimum [%s%% >= %s%%]: %s",
+                                        actualFormatted, minimumFormatted, metric ) );
+        }
+        else
+        {
+            logger.error( String.format( "Coverage is below minimum [%s%% < %s%%]: %s",
+                                         actualFormatted, minimumFormatted, metric ) );
+        }
+
+        return ok;
+    }
 }
